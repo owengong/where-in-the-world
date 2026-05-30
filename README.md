@@ -11,9 +11,6 @@ Pins are colored by relationship: 🟢 **lives · from · family** · 🔵 **vis
 🟡 **wishlist**. Places can also carry free-form **tags** (`ski resort`,
 `holy site`, `money capital`, …).
 
-> Rebuilt from a form-driven CRUD app into a text-in / structure-out tool. See
-> `git log` for the original.
-
 ## Tech stack
 
 - **Next.js 14** (App Router) · React · TypeScript · Tailwind
