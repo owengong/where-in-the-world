@@ -1,36 +1,29 @@
 'use client';
 
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import MapGL, { Marker, NavigationControl, type MapRef } from 'react-map-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import Supercluster from 'supercluster';
 import { CATEGORY_RANK, type MapPlace } from '@/lib/types';
+import { CATEGORY_COLOR, colorForRank, textForRank } from '@/lib/colors';
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-const RESIDENT_COLOR = '#22c55e'; // green — lives / from / family
-const VISITED_COLOR = '#3b82f6'; // blue — visited
-const WISHLIST_COLOR = '#eab308'; // yellow — wishlist only
-
-// Highest tier wins for a place or a mixed cluster.
-function colorForRank(rank: number): string {
-  return rank >= 2 ? RESIDENT_COLOR : rank === 1 ? VISITED_COLOR : WISHLIST_COLOR;
-}
-// Yellow needs dark text to stay legible; green/blue use white.
-function textForRank(rank: number): string {
-  return rank === 0 ? '#374151' : '#ffffff';
-}
 
 type Props = {
   places: MapPlace[];
   selectedPlaceId?: string | null;
   onSelectPlace: (place: MapPlace) => void;
+  /** When set (a fresh object per request), fly the map here. */
+  focus?: { lng: number; lat: number; zoom?: number } | null;
+  /** The left drawer is open — hide left-edge controls it would cover. */
+  listOpen?: boolean;
 };
 
 function bubbleSize(count: number): number {
   return Math.min(56, 30 + count * 3);
 }
 
-export default function ClusterMap({ places, selectedPlaceId, onSelectPlace }: Props) {
+export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, focus, listOpen }: Props) {
   const mapRef = useRef<MapRef | null>(null);
   const [isGlobe, setIsGlobe] = useState(false);
   const [bounds, setBounds] = useState<[number, number, number, number] | null>(null);
@@ -85,6 +78,12 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace }: P
   const resetView = useCallback(() => {
     mapRef.current?.flyTo({ center: [0, 20], zoom: 1.6, duration: 800 });
   }, []);
+
+  // Fly to a place picked from the search palette or the browse list.
+  useEffect(() => {
+    if (!focus) return;
+    mapRef.current?.flyTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? 10, duration: 800 });
+  }, [focus]);
 
   if (!MAPBOX_TOKEN) {
     return (
@@ -163,26 +162,28 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace }: P
         })}
       </MapGL>
 
-      <button
-        onClick={resetView}
-        title="Zoom out to the full map"
-        className="absolute left-4 top-4 z-10 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
-      >
-        🌍 World
-      </button>
+      {!listOpen && (
+        <button
+          onClick={resetView}
+          title="Zoom out to the full map"
+          className="absolute left-4 top-16 z-10 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
+        >
+          🌍 World
+        </button>
+      )}
 
       <div className="absolute bottom-4 left-4 flex flex-col items-start gap-2">
         <div className="flex items-center gap-3 rounded-lg bg-white/95 px-3 py-2 text-xs text-gray-600 shadow-md backdrop-blur">
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: RESIDENT_COLOR }} />
+            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.resident }} />
             lives · from · family
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: VISITED_COLOR }} />
+            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.visited }} />
             visited
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: WISHLIST_COLOR }} />
+            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.wishlist }} />
             wishlist
           </span>
         </div>

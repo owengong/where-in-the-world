@@ -57,7 +57,11 @@ export default function PlaceDetail({
   };
 
   return (
-    <div className="absolute right-4 top-4 z-30 flex max-h-[calc(100vh-2rem)] w-80 flex-col rounded-2xl border border-gray-200 bg-white/97 shadow-xl backdrop-blur">
+    <div
+      role="dialog"
+      aria-label={place.name}
+      className="absolute right-4 top-4 z-30 flex max-h-[calc(100vh-2rem)] w-80 flex-col rounded-2xl border border-gray-200 bg-white/97 shadow-xl backdrop-blur"
+    >
       <div className="flex items-start justify-between p-4 pb-2">
         <div>
           <h2 className="text-lg font-semibold text-gray-900">{place.name}</h2>

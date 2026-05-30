@@ -39,6 +39,13 @@ export type MapPlace = {
   lat: number;
   lng: number;
   placeType: string | null;
+  /** admin hierarchy from geocoding — powers grouping + search in the browse list */
+  countryName: string | null;
+  countryCode: string | null;
+  regionName: string | null;
+  districtName: string | null;
+  placeName: string | null;
+  neighborhoodName: string | null;
   /** distinct people tied to this place — the number shown in the bubble */
   personCount: number;
   /** pin color category — resident (green) > visited (blue) > wishlist (yellow) */
