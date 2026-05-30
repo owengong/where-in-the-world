@@ -1,103 +1,80 @@
 # Where in the World
 
-This is a [Next.js](https://nextjs.org/) project that allows users to add and manage people's locations around the world.
+A personal map of the people and places in your life. The map is the home
+screen (Find-My style — pins collapse into per-region counts as you zoom out),
+and you capture by **typing free text** — *"Ada lives in Lisbon"*,
+*"met Theo in Tokyo"*, *"Berlin: Mira, Kai, Noor"* — which an LLM turns
+into structured people, places, and relationships. Once a place exists, you edit
+it with direct clicks: add/remove/rename people, tag the place, no LLM needed.
 
-## Prerequisites
+Pins are colored by relationship: 🟢 **lives · from · family** · 🔵 **visited** ·
+🟡 **wishlist**. Places can also carry free-form **tags** (`ski resort`,
+`holy site`, `money capital`, …).
 
-Before you begin, ensure you have the following installed:
-- Node.js (version 14 or later)
-- npm or yarn
-- PostgreSQL (version 12 or later)
+> Rebuilt from a form-driven CRUD app into a text-in / structure-out tool. See
+> `git log` for the original.
 
-## Getting Started
+## Tech stack
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/your-username/where-in-the-world.git
-   cd where-in-the-world
-   ```
+- **Next.js 14** (App Router) · React · TypeScript · Tailwind
+- **Postgres** on **Neon** via **Drizzle ORM** (no PostGIS — clustering is client-side)
+- **react-map-gl / mapbox-gl** + **Supercluster** for the zoom-collapse map
+- **Geocoding (3-tier):** Mapbox Geocoding v6 (admin places) → Mapbox Search Box (POIs) → OpenStreetMap/Nominatim (fallback)
+- **Claude Haiku 4.5** (`@anthropic-ai/sdk`) for text→structure parsing (optional; a built-in quick parser runs without a key)
 
-2. Install dependencies:
+Architecture is **API-first** — all logic lives in `/app/api` route handlers and
+`lib/server/*`, so a future iOS (Expo) client can reuse the same endpoints.
+`lib/types.ts` and `lib/api-client.ts` are framework-agnostic on purpose.
+
+## Setup
+
+1. **Install:**
    ```bash
    npm install
-   # or
-   yarn install
    ```
-
-3. Set up the database:
-   - Create a new PostgreSQL database:
-     ```sql
-     CREATE DATABASE where_in_the_world;
-     ```
-   - Create a new user and grant privileges:
-     ```sql
-     CREATE USER your_username WITH ENCRYPTED PASSWORD 'your_password';
-     GRANT ALL PRIVILEGES ON DATABASE where_in_the_world TO your_username;
-     ```
-
-4. Set up environment variables:
-   - Create a `.env` file in the root directory:
-     ```
-     DATABASE_URL="postgresql://your_username:your_password@localhost:5432/where_in_the_world?schema=public"
-     ```
-   Replace `your_username` and `your_password` with the credentials you created.
-
-5. Run database migrations:
+2. **Database** — create a free Neon project at https://neon.tech (no card), then:
    ```bash
-   npx prisma migrate dev
+   cp .env.example .env   # paste your DATABASE_URL, Mapbox token, Anthropic key
+   npm run db:migrate     # create the tables
    ```
-
-6. Generate Prisma client:
+3. **Tokens** (in `.env`):
+   - `NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` — public token for map tiles (URL-restrict it for prod)
+   - `MAPBOX_TOKEN` — separate server token for geocoding (unrestricted; never shipped to the browser)
+   - `ANTHROPIC_API_KEY` — optional; without it the built-in quick parser is used
+   See `.env.example` for the full two-token explanation.
+4. **(Optional) sample data:**
    ```bash
-   npx prisma generate
+   npm run db:seed
    ```
-
-7. Run the development server:
+5. **Run:**
    ```bash
-   npm run dev
-   # or
-   yarn dev
+   npm run dev   # http://localhost:3000
    ```
 
-8. Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Scripts
 
-9. (Optional) Run Prisma Studio to view and edit your data:
-   ```bash
-   npx prisma studio
-   ```
-   This will open Prisma Studio in your default web browser, typically at http://localhost:5555
+| Script | What it does |
+| --- | --- |
+| `npm run dev` | Dev server |
+| `npm run build` | Production build |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run db:migrate` | Apply migrations (non-interactive) |
+| `npm run db:generate` | Generate a migration from the schema |
+| `npm run db:studio` | Browse the DB in Drizzle Studio |
+| `npm run db:seed` | Insert sample data |
+| `npm run db:reset` | Wipe all data (keeps schema) |
 
-## Features
+## Data model
 
-- Add people with their name, country, city, and profile picture (with initials)
-- Search for cities by typing in the city input field
-- Navigate through the city dropdown using arrow keys and select a city by pressing Enter
-- Select a city from the dropdown by clicking on it
-- The profile picture displays the initials of the person's name
-- Save person data to a PostgreSQL database
+- `raw_entries` — immutable source of truth (exactly what you typed/spoke)
+- `people` — deduped by normalized name
+- `places` — one point (lat/lng) + admin hierarchy; no polygons
+- `person_place` — many-to-many with a typed relationship (`lives | from | family | visited | wishlist`)
+- `place_tags` — free-form labels on a place
 
-## Technologies Used
+## Roadmap
 
-- Next.js
-- React
-- TypeScript
-- Tailwind CSS
-- PostgreSQL
-- Prisma ORM
-
-## Project Structure
-
-- `app/`: Next.js app router files
-- `components/`: React components
-- `lib/`: Utility functions and database client
-- `prisma/`: Prisma schema and migrations
-- `public/`: Static files
-- `styles/`: Global styles
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+- Disambiguation queue (catch low-confidence/ambiguous geocodes → "did you mean X or Y?")
+- Tag-based map filtering
+- Bulk-paste import UI (currently a one-off script)
+- iOS via Expo (native share-sheet capture + on-device dictation) against this same API

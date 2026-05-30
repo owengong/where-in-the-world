@@ -37,3 +37,6 @@ next-env.d.ts
 
 # env
 .env
+
+# personal data (parsed Apple Notes — names/locations, not for the repo)
+/scripts/import-data.json
