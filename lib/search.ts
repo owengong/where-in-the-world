@@ -14,6 +14,8 @@ export type PlaceGroup = {
   key: string;
   label: string;
   places: MapPlace[];
+  /** DISTINCT people across all the group's places (a friend tied to 3 places in
+   *  the country counts once) — NOT the sum of per-place counts. */
   personTotal: number;
 };
 
@@ -140,11 +142,16 @@ export function groupByCountry(places: MapPlace[]): PlaceGroup[] {
   const groups: PlaceGroup[] = [];
   for (const [key, list] of byKey) {
     list.sort((a, b) => b.personCount - a.personCount || a.name.localeCompare(b.name));
+    // Distinct people across the whole country — summing per-place counts would
+    // double-count anyone tied to several places in it (e.g. one friend with a
+    // 20-city Italy wishlist would read as "20 people in Italy").
+    const ids = new Set<string>();
+    for (const p of list) for (const link of p.people) ids.add(link.personId);
     groups.push({
       key,
       label: key === '__other__' ? 'Other / regions' : key,
       places: list,
-      personTotal: list.reduce((sum, p) => sum + p.personCount, 0),
+      personTotal: ids.size,
     });
   }
 

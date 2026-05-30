@@ -25,6 +25,8 @@ type FocusTarget = { lng: number; lat: number; zoom?: number; bbox?: [number, nu
 // pin, scaled to how specific the place is.
 function zoomForPlaceType(t: string | null): number {
   switch (t) {
+    case 'continent':
+      return 2;
     case 'country':
       return 4;
     case 'region':

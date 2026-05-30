@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import { db } from '@/lib/db';
 import { people, places, personPlace, placeTags, rawEntries } from '@/lib/db/schema';
@@ -33,6 +33,41 @@ async function findPersonId(name: string): Promise<string | null> {
   return rows[0]?.id ?? null;
 }
 
+// Find a place we already geocoded to the SAME physical feature, reached via a
+// different phrasing ("Niseko" vs "Niseko, Japan"). Identity is the provider's
+// stable feature id; when that's missing (some Nominatim/curated results) fall
+// back to near-identical coordinates + name. Without this, the query-string
+// cache key alone created a second row per phrasing.
+async function findExistingByIdentity(geo: {
+  provider: string;
+  providerId: string | null;
+  lat: number;
+  lng: number;
+  name: string;
+}): Promise<Place | null> {
+  if (geo.providerId) {
+    const byId = await db
+      .select()
+      .from(places)
+      .where(and(eq(places.provider, geo.provider), eq(places.providerId, geo.providerId)))
+      .limit(1);
+    if (byId[0]) return byId[0];
+  }
+  // No provider id: match on coordinates rounded to ~1m plus the display name.
+  const byCoord = await db
+    .select()
+    .from(places)
+    .where(
+      and(
+        eq(places.name, geo.name),
+        sql`round(${places.lat}::numeric, 5) = round(${geo.lat}::numeric, 5)`,
+        sql`round(${places.lng}::numeric, 5) = round(${geo.lng}::numeric, 5)`,
+      ),
+    )
+    .limit(1);
+  return byCoord[0] ?? null;
+}
+
 // Cache-first place resolution: one geocode per distinct place string, stored
 // forever (keeps Mapbox Permanent geocoding at cents/year).
 async function resolvePlace(query: string): Promise<Place | null> {
@@ -44,6 +79,11 @@ async function resolvePlace(query: string): Promise<Place | null> {
 
   const geo = await geocodePlace(query);
   if (!geo) return null;
+
+  // Reuse the existing row when this geocodes to a place we already have under a
+  // different query string — otherwise the same spot gets a duplicate pin.
+  const existing = await findExistingByIdentity(geo);
+  if (existing) return existing;
 
   const [row] = await db
     .insert(places)

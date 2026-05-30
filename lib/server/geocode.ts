@@ -27,7 +27,7 @@ export type GeocodeResult = {
   neighborhoodName: string | null;
   /** [west, south, east, north] when the provider supplies it — lets the map fit to the place's extent. */
   bbox: [number, number, number, number] | null;
-  provider: 'mapbox' | 'nominatim';
+  provider: 'mapbox' | 'nominatim' | 'curated';
   providerId: string | null;
 };
 
@@ -66,12 +66,59 @@ function permanent(): boolean {
   return process.env.MAPBOX_PERMANENT !== 'false';
 }
 
+// Continents (and a few common supra-national regions) aren't admin places, so
+// the geocoders either return nothing or a junk same-named point — "South
+// America" flew to a random spot. Resolve them from a curated table first so
+// "Go to <continent>" frames the whole landmass. bbox is [west, south, east,
+// north]; the map fits to it, so the center is informational.
+const CURATED_REGIONS: Record<string, { name: string; bbox: [number, number, number, number] }> = {
+  africa: { name: 'Africa', bbox: [-25.4, -35.0, 51.5, 37.6] },
+  antarctica: { name: 'Antarctica', bbox: [-180, -85, 180, -60] },
+  asia: { name: 'Asia', bbox: [26.0, -11.0, 169.0, 78.0] },
+  europe: { name: 'Europe', bbox: [-25.0, 34.0, 45.0, 71.5] },
+  'north america': { name: 'North America', bbox: [-168.0, 7.0, -52.0, 72.0] },
+  'south america': { name: 'South America', bbox: [-82.0, -56.0, -34.0, 13.0] },
+  oceania: { name: 'Oceania', bbox: [110.0, -50.0, 180.0, 0.0] },
+};
+
+function curatedRegion(q: string): GeocodeResult | null {
+  const key = q
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  const hit = CURATED_REGIONS[key];
+  if (!hit) return null;
+  const [w, s, e, n] = hit.bbox;
+  return {
+    name: hit.name,
+    lat: (s + n) / 2,
+    lng: (w + e) / 2,
+    placeType: 'continent',
+    countryCode: null,
+    countryName: null,
+    regionCode: null,
+    regionName: null,
+    districtName: null,
+    placeName: null,
+    neighborhoodName: null,
+    bbox: hit.bbox,
+    provider: 'curated',
+    providerId: `continent:${key}`,
+  };
+}
+
 export async function geocodePlace(
   query: string,
   opts: GeocodeOpts = {},
 ): Promise<GeocodeResult | null> {
   const q = query.trim();
   if (!q) return null;
+
+  // 0) Continents / supra-national regions the geocoders can't place sensibly.
+  const curated = curatedRegion(q);
+  if (curated) return curated;
 
   const token = mapboxToken();
   if (token && process.env.GEOCODER !== 'nominatim') {

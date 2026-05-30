@@ -112,7 +112,11 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
           groups.map((g) => (
             <div key={g.key}>
               <div className="sticky top-0 z-10 bg-white/95 px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide text-gray-400 backdrop-blur">
-                {g.label} <span className="text-gray-300">· {g.places.length}</span>
+                {g.label}{' '}
+                <span className="text-gray-300">
+                  · {g.places.length} {g.places.length === 1 ? 'place' : 'places'} · {g.personTotal}{' '}
+                  {g.personTotal === 1 ? 'person' : 'people'}
+                </span>
               </div>
               {g.places.map((p) => row(p))}
             </div>
