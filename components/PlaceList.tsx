@@ -61,8 +61,8 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
       ref={drawerRef}
       role="dialog"
       aria-label="Browse places"
-      className={`absolute left-0 top-0 z-40 flex h-full w-80 max-w-[85vw] flex-col border-r border-gray-200 bg-white/97 shadow-xl backdrop-blur transition-transform duration-200 ${
-        open ? 'translate-x-0' : '-translate-x-full'
+      className={`absolute right-0 top-0 z-40 flex h-full w-80 max-w-[85vw] flex-col border-l border-gray-200 bg-white/97 shadow-xl backdrop-blur transition-transform duration-200 ${
+        open ? 'translate-x-0' : 'translate-x-full'
       }`}
     >
       <div className="flex items-center justify-between px-3 pt-3">

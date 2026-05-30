@@ -4,6 +4,22 @@
 
 import type { CaptureResult, CaptureSource, DeleteOp, MapPlace, Relationship } from '@/lib/types';
 
+export type GeocodeHit = {
+  name: string;
+  lat: number;
+  lng: number;
+  placeType: string | null;
+  bbox: [number, number, number, number] | null;
+};
+
+/** Resolve any place name to coords + bbox for map navigation (no DB write). */
+export async function geocodeQuery(q: string, baseUrl = ''): Promise<GeocodeHit | null> {
+  const res = await fetch(`${baseUrl}/api/geocode?q=${encodeURIComponent(q)}`, { cache: 'no-store' });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { result: GeocodeHit | null };
+  return data.result;
+}
+
 export async function fetchMapPlaces(baseUrl = ''): Promise<MapPlace[]> {
   const res = await fetch(`${baseUrl}/api/map`, { cache: 'no-store' });
   if (!res.ok) throw new Error(`GET /api/map failed: ${res.status}`);

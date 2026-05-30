@@ -25,6 +25,8 @@ export type GeocodeResult = {
   districtName: string | null;
   placeName: string | null;
   neighborhoodName: string | null;
+  /** [west, south, east, north] when the provider supplies it — lets the map fit to the place's extent. */
+  bbox: [number, number, number, number] | null;
   provider: 'mapbox' | 'nominatim';
   providerId: string | null;
 };
@@ -32,7 +34,27 @@ export type GeocodeResult = {
 export type GeocodeOpts = {
   /** Bias results toward this point to disambiguate (e.g. your home location). */
   proximity?: { lng: number; lat: number };
+  /** Permanent geocoding (required when STORING coords); pass false for display-only navigation. */
+  permanent?: boolean;
 };
+
+// A GeoJSON-style [w,s,e,n] array (Mapbox) -> our tuple, else null.
+function parseBbox(b: any): [number, number, number, number] | null {
+  if (Array.isArray(b) && b.length === 4) {
+    const v = b.map(Number);
+    if (v.every((n) => Number.isFinite(n))) return [v[0], v[1], v[2], v[3]];
+  }
+  return null;
+}
+
+// Nominatim boundingbox is [south, north, west, east] (strings) -> [w,s,e,n].
+function parseNominatimBbox(b: any): [number, number, number, number] | null {
+  if (Array.isArray(b) && b.length === 4) {
+    const [s, n, w, e] = b.map(Number);
+    if ([s, n, w, e].every(Number.isFinite)) return [w, s, e, n];
+  }
+  return null;
+}
 
 function mapboxToken(): string | undefined {
   return process.env.MAPBOX_TOKEN || process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN || undefined;
@@ -103,7 +125,7 @@ async function geocodeMapbox(
     q,
     access_token: token,
     limit: '1',
-    permanent: permanent() ? 'true' : 'false',
+    permanent: (opts.permanent ?? permanent()) ? 'true' : 'false',
   });
   if (opts.proximity) params.set('proximity', `${opts.proximity.lng},${opts.proximity.lat}`);
 
@@ -152,6 +174,7 @@ async function geocodeMapbox(
     districtName: ctx.district?.name ?? null,
     placeName,
     neighborhoodName,
+    bbox: parseBbox(f.bbox ?? props.bbox),
     provider: 'mapbox',
     providerId: props.mapbox_id ?? null,
   };
@@ -197,6 +220,7 @@ async function geocodeSearchBox(
     districtName: ctx.district?.name ?? null,
     placeName: ctx.place?.name ?? null,
     neighborhoodName: ctx.neighborhood?.name ?? null,
+    bbox: parseBbox(f.bbox ?? props.bbox),
     provider: 'mapbox',
     providerId: props.mapbox_id ?? null,
   };
@@ -270,6 +294,7 @@ async function geocodeNominatim(q: string): Promise<GeocodeResult | null> {
     districtName: addr.county || null,
     placeName,
     neighborhoodName,
+    bbox: parseNominatimBbox(f.boundingbox),
     provider: 'nominatim',
     providerId: f.osm_type && f.osm_id ? `${f.osm_type}/${f.osm_id}` : null,
   };

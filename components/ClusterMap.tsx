@@ -13,17 +13,15 @@ type Props = {
   places: MapPlace[];
   selectedPlaceId?: string | null;
   onSelectPlace: (place: MapPlace) => void;
-  /** When set (a fresh object per request), fly the map here. */
-  focus?: { lng: number; lat: number; zoom?: number } | null;
-  /** The left drawer is open — hide left-edge controls it would cover. */
-  listOpen?: boolean;
+  /** When set (a fresh object per request), move the map here — fit the bbox if given, else fly to the point. */
+  focus?: { lng: number; lat: number; zoom?: number; bbox?: [number, number, number, number] | null } | null;
 };
 
 function bubbleSize(count: number): number {
   return Math.min(56, 30 + count * 3);
 }
 
-export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, focus, listOpen }: Props) {
+export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, focus }: Props) {
   const mapRef = useRef<MapRef | null>(null);
   const [isGlobe, setIsGlobe] = useState(false);
   const [bounds, setBounds] = useState<[number, number, number, number] | null>(null);
@@ -79,10 +77,22 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, foc
     mapRef.current?.flyTo({ center: [0, 20], zoom: 1.6, duration: 800 });
   }, []);
 
-  // Fly to a place picked from the search palette or the browse list.
+  // Move to a place picked from the palette/list, or a geocoded "go to" search:
+  // fit its bounding box when we have one (frames a whole country), else fly.
   useEffect(() => {
-    if (!focus) return;
-    mapRef.current?.flyTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? 10, duration: 800 });
+    const map = mapRef.current;
+    if (!focus || !map) return;
+    if (focus.bbox) {
+      map.fitBounds(
+        [
+          [focus.bbox[0], focus.bbox[1]],
+          [focus.bbox[2], focus.bbox[3]],
+        ],
+        { padding: 64, duration: 800, maxZoom: 12 },
+      );
+    } else {
+      map.flyTo({ center: [focus.lng, focus.lat], zoom: focus.zoom ?? 10, duration: 800 });
+    }
   }, [focus]);
 
   if (!MAPBOX_TOKEN) {
@@ -162,37 +172,37 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, foc
         })}
       </MapGL>
 
-      {!listOpen && (
+      {/* View controls — a small two-up row under the search bar, same total width. */}
+      <div className="absolute left-4 top-16 z-10 flex w-48 gap-2">
         <button
           onClick={resetView}
           title="Zoom out to the full map"
-          className="absolute left-4 top-16 z-10 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
+          className="flex-1 rounded-lg bg-white/95 px-2 py-1.5 text-center text-xs font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
         >
-          🌍 World
+          🔍 Zoom out
         </button>
-      )}
-
-      <div className="absolute bottom-4 left-4 flex flex-col items-start gap-2">
-        <div className="flex items-center gap-3 rounded-lg bg-white/95 px-3 py-2 text-xs text-gray-600 shadow-md backdrop-blur">
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.resident }} />
-            lives · from · family
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.visited }} />
-            visited
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.wishlist }} />
-            wishlist
-          </span>
-        </div>
         <button
           onClick={() => setIsGlobe((g) => !g)}
-          className="rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
+          className="flex-1 rounded-lg bg-white/95 px-2 py-1.5 text-center text-xs font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
         >
-          {isGlobe ? 'Flat map' : 'Globe'}
+          {isGlobe ? '🗺️ Flat' : '🌐 Globe'}
         </button>
+      </div>
+
+      {/* Legend alone, bottom-left. */}
+      <div className="absolute bottom-4 left-4 flex items-center gap-3 rounded-lg bg-white/95 px-3 py-2 text-xs text-gray-600 shadow-md backdrop-blur">
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.resident }} />
+          lives · from · family
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.visited }} />
+          visited
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="h-3 w-3 rounded-full border border-white shadow-sm" style={{ backgroundColor: CATEGORY_COLOR.wishlist }} />
+          wishlist
+        </span>
       </div>
     </div>
   );

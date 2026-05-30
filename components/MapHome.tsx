@@ -12,13 +12,14 @@ import {
   addPersonToPlace,
   applyDeletes,
   fetchMapPlaces,
+  geocodeQuery,
   postCapture,
   renamePerson,
   setPlaceTag,
 } from '@/lib/api-client';
 import type { CaptureResult, MapPlace, PendingDelete, Relationship } from '@/lib/types';
 
-type FocusTarget = { lng: number; lat: number; zoom?: number } | null;
+type FocusTarget = { lng: number; lat: number; zoom?: number; bbox?: [number, number, number, number] | null } | null;
 
 // Land past the cluster-expansion threshold so the picked place shows as its own
 // pin, scaled to how specific the place is.
@@ -179,6 +180,19 @@ export default function MapHome() {
     [places],
   );
 
+  // "Go to <place>" from the palette: geocode ANY place (even with nobody tagged,
+  // e.g. "United States") and frame it on the map. No DB write, no PlaceDetail.
+  const handleSearchMap = useCallback(async (query: string) => {
+    setPaletteOpen(false);
+    const hit = await geocodeQuery(query);
+    if (!hit) {
+      setError(`Couldn't find "${query}" on the map`);
+      return;
+    }
+    setError(null);
+    setFocusTarget({ lng: hit.lng, lat: hit.lat, zoom: zoomForPlaceType(hit.placeType), bbox: hit.bbox });
+  }, []);
+
   // One global hotkey listener: Cmd/Ctrl+K or "/" => search, Cmd/Ctrl+L => list,
   // Esc closes the next surface down. "/" and Esc never fire while typing.
   useEffect(() => {
@@ -193,9 +207,9 @@ export default function MapHome() {
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((o) => !o);
-      } else if (mod && e.key.toLowerCase() === 'l' && !paletteOpen) {
+      } else if (mod && e.key.toLowerCase() === 'b' && !paletteOpen) {
         e.preventDefault();
-        setListOpen((o) => !o);
+        setListOpen((o) => !o); // toggle the Places sidebar (⌘B doesn't clobber Chrome/Mac)
       } else if (e.key === '/' && !mod && !isEditable(e.target)) {
         e.preventDefault();
         setPaletteOpen(true);
@@ -223,35 +237,37 @@ export default function MapHome() {
         selectedPlaceId={selectedId}
         onSelectPlace={(p) => setSelectedId(p.placeId)}
         focus={focusTarget}
-        listOpen={listOpen}
       />
 
+      {/* Search — top-left, the primary action. */}
+      <button
+        onClick={() => setPaletteOpen(true)}
+        title="Search (⌘/Ctrl+K or /)"
+        className="absolute left-4 top-4 z-30 flex w-48 items-center justify-between rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
+      >
+        <span className="flex items-center gap-1.5">
+          <Search size={16} /> Search
+        </span>
+        <kbd className="hidden rounded border border-gray-200 bg-gray-50 px-1 text-[10px] text-gray-400 sm:inline">
+          ⌘K
+        </kbd>
+      </button>
+
+      {/* Places (browse drawer) — top-right, hidden while the drawer is open. */}
       {!listOpen && (
-        <div className="absolute left-4 top-4 z-30 flex items-center gap-2">
-          <button
-            onClick={() => setPaletteOpen(true)}
-            title="Search (⌘/Ctrl+K or /)"
-            className="flex items-center gap-1.5 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
-          >
-            <Search size={16} /> Search
-            <kbd className="ml-0.5 hidden rounded border border-gray-200 bg-gray-50 px-1 text-[10px] text-gray-400 sm:inline">
-              ⌘K
-            </kbd>
-          </button>
-          <button
-            onClick={() => setListOpen(true)}
-            title="Browse all places (⌘/Ctrl+L)"
-            className="flex items-center gap-1.5 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
-          >
-            <List size={16} /> Places
-          </button>
-        </div>
+        <button
+          onClick={() => setListOpen(true)}
+          title="Browse all places (⌘/Ctrl+B)"
+          className="absolute right-4 top-4 z-30 flex items-center gap-1.5 rounded-lg bg-white/95 px-3 py-2 text-sm font-medium text-gray-700 shadow-md backdrop-blur hover:bg-white"
+        >
+          <List size={16} /> Places
+          <kbd className="hidden rounded border border-gray-200 bg-gray-50 px-1 text-[10px] text-gray-400 sm:inline">
+            ⌘B
+          </kbd>
+        </button>
       )}
 
-      <div
-        className="absolute top-4 z-20 w-[min(680px,92vw)] -translate-x-1/2 space-y-2"
-        style={{ left: listOpen ? 'calc(20rem + (100vw - 20rem) / 2)' : '50%' }}
-      >
+      <div className="absolute left-1/2 top-4 z-20 w-[min(740px,92vw)] -translate-x-1/2 space-y-2">
         <CaptureBar onSubmit={handleCapture} busy={busy} />
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50/95 px-3 py-2 text-sm text-red-700 shadow backdrop-blur">
@@ -275,6 +291,7 @@ export default function MapHome() {
           onRemoveLink={handleRemoveLink}
           onRenamePerson={handleRenamePerson}
           onSetTag={handleSetTag}
+          listOpen={listOpen}
         />
       )}
 
@@ -291,6 +308,7 @@ export default function MapHome() {
         onOpenChange={setPaletteOpen}
         places={places}
         onPick={handlePick}
+        onSearchMap={handleSearchMap}
       />
     </main>
   );

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useRef, useState } from 'react';
+import { X } from 'lucide-react';
 import {
   RELATIONSHIPS,
   RELATIONSHIP_LABEL,
@@ -16,6 +17,8 @@ type Props = {
   onRemoveLink: (personId: string, linkId: string) => void;
   onRenamePerson: (personId: string, name: string) => void;
   onSetTag: (placeId: string, tag: string, remove: boolean) => void;
+  /** Shift left to sit beside the browse drawer when it's open on the right. */
+  listOpen?: boolean;
 };
 
 export default function PlaceDetail({
@@ -25,6 +28,7 @@ export default function PlaceDetail({
   onRemoveLink,
   onRenamePerson,
   onSetTag,
+  listOpen,
 }: Props) {
   const [name, setName] = useState('');
   const [relationship, setRelationship] = useState<Relationship>('lives');
@@ -60,7 +64,9 @@ export default function PlaceDetail({
     <div
       role="dialog"
       aria-label={place.name}
-      className="absolute right-4 top-4 z-30 flex max-h-[calc(100vh-2rem)] w-80 flex-col rounded-2xl border border-gray-200 bg-white/97 shadow-xl backdrop-blur"
+      className={`absolute top-16 z-30 flex max-h-[calc(100vh-5rem)] w-80 flex-col rounded-2xl border border-gray-200 bg-white/97 shadow-xl backdrop-blur transition-[right] duration-200 ${
+        listOpen ? 'right-[21rem]' : 'right-4'
+      }`}
     >
       <div className="flex items-start justify-between p-4 pb-2">
         <div>
@@ -107,7 +113,7 @@ export default function PlaceDetail({
               }
             }}
             placeholder="+ tag"
-            className="w-16 rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-xs outline-none focus:w-32 focus:border-gray-400"
+            className="w-24 rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-xs outline-none focus:border-gray-400"
           />
         </div>
       </div>
@@ -124,7 +130,7 @@ export default function PlaceDetail({
                 .map((p) => (
                   <li
                     key={p.linkId}
-                    className="group flex items-center justify-between rounded px-1 py-0.5 hover:bg-gray-50"
+                    className="group flex items-center justify-between rounded-md px-1.5 py-1 transition-colors hover:bg-gray-50"
                   >
                     {editingLinkId === p.linkId ? (
                       <input
@@ -142,25 +148,27 @@ export default function PlaceDetail({
                           }
                         }}
                         onBlur={() => saveRename(p)}
-                        className="min-w-0 flex-1 rounded border border-gray-300 px-1 py-0.5 text-sm outline-none focus:border-gray-400"
+                        className="-my-0.5 min-w-0 flex-1 rounded-md bg-white px-1.5 py-0.5 text-sm text-gray-900 outline-none ring-1 ring-inset ring-gray-300 focus:ring-gray-400"
                       />
                     ) : (
                       <button
                         onClick={() => startEdit(p)}
-                        className="flex-1 truncate text-left text-sm text-gray-800 hover:underline"
+                        className="min-w-0 flex-1 truncate text-left text-sm text-gray-800"
                         title="Click to rename (updates this person everywhere)"
                       >
                         {p.name}
                       </button>
                     )}
-                    <button
-                      onClick={() => onRemoveLink(p.personId, p.linkId)}
-                      className="ml-2 text-gray-300 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
-                      title={`Remove ${p.name} from ${place.name}`}
-                      aria-label={`Remove ${p.name}`}
-                    >
-                      ✕
-                    </button>
+                    {editingLinkId !== p.linkId && (
+                      <button
+                        onClick={() => onRemoveLink(p.personId, p.linkId)}
+                        className="ml-2 shrink-0 text-gray-300 opacity-0 transition-opacity hover:text-red-500 group-hover:opacity-100"
+                        title={`Remove ${p.name} from ${place.name}`}
+                        aria-label={`Remove ${p.name}`}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
                   </li>
                 ))}
             </ul>
