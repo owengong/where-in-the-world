@@ -133,7 +133,7 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, foc
         mapboxAccessToken={MAPBOX_TOKEN}
         initialViewState={{ longitude: 0, latitude: 20, zoom: 1.6 }}
         style={{ width: '100%', height: '100%' }}
-        mapStyle="mapbox://styles/mapbox/light-v11"
+        mapStyle="mapbox://styles/ogong500/cm0ga6nqq011c01pnbth49k9u"
         projection={{ name: isGlobe ? 'globe' : 'mercator' }}
         onLoad={syncViewport}
         onMoveEnd={handleMoveEnd}

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { List, Search, Tag, X } from 'lucide-react';
+import { List, Search, Tag, User, X } from 'lucide-react';
 import ClusterMap from './ClusterMap';
 import CaptureBar from './CaptureBar';
 import ParsedChip from './ParsedChip';
@@ -59,16 +59,19 @@ export default function MapHome() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusTarget, setFocusTarget] = useState<FocusTarget>(null);
   const [tagFilters, setTagFilters] = useState<string[]>([]);
+  // The map can be filtered to ONE person (everywhere they live/visited/want to
+  // go). Single-select for now, and mutually exclusive with the tag filter —
+  // picking one clears the other (one filter dimension at a time).
+  const [personFilter, setPersonFilter] = useState<{ id: string; name: string } | null>(null);
 
-  // The map + browse list show places carrying ANY selected tag (union); the
-  // palette keeps searching the full set (it's where you pick/clear tags).
-  const visiblePlaces = useMemo(
-    () =>
-      tagFilters.length
-        ? places.filter((p) => p.tags.some((t) => tagFilters.includes(t)))
-        : places,
-    [places, tagFilters],
-  );
+  // The map + browse list show the active filter: a person's places if one is
+  // selected, else places carrying ANY selected tag (union), else everything.
+  // The palette keeps searching the full set (it's where you pick/clear filters).
+  const visiblePlaces = useMemo(() => {
+    if (personFilter) return places.filter((p) => p.people.some((l) => l.personId === personFilter.id));
+    if (tagFilters.length) return places.filter((p) => p.tags.some((t) => tagFilters.includes(t)));
+    return places;
+  }, [places, personFilter, tagFilters]);
 
   // Latest values for the global key handler to read WITHOUT re-subscribing the
   // window listener every render (visiblePlaces is a fresh array each time).
@@ -112,6 +115,14 @@ export default function MapHome() {
       const live = cur.filter((t) => places.some((p) => p.tags.includes(t)));
       return live.length === cur.length ? cur : live;
     });
+  }, [places]);
+
+  // Drop the person filter if that person no longer has any places (their last
+  // link was removed / they were deleted) so the map can't be stranded empty.
+  useEffect(() => {
+    setPersonFilter((cur) =>
+      cur && places.some((p) => p.people.some((l) => l.personId === cur.id)) ? cur : null,
+    );
   }, [places]);
 
   const handleCapture = useCallback(
@@ -159,6 +170,9 @@ export default function MapHome() {
   );
 
   const handleCancelDelete = useCallback((pending: PendingDelete) => dropPending(pending.token), []);
+
+  // Stable so ParsedChip's auto-dismiss timer doesn't reset on every render.
+  const handleDismissResult = useCallback(() => setResult(null), []);
 
   // Direct click-edits from the place panel (no LLM).
   const handleAddPerson = useCallback(
@@ -233,14 +247,15 @@ export default function MapHome() {
     (placeId: string) => {
       const place = places.find((p) => p.placeId === placeId);
       if (!place) return;
-      // If a tag filter is active and the picked place isn't in it, clear the
-      // filter — otherwise the card would open over an empty map with no pin.
+      // If a filter is active and the picked place isn't in it, clear that filter
+      // — otherwise the card would open over an empty map with no pin.
       if (tagFilters.length && !place.tags.some((t) => tagFilters.includes(t))) setTagFilters([]);
+      if (personFilter && !place.people.some((l) => l.personId === personFilter.id)) setPersonFilter(null);
       setSelectedId(placeId);
       setFocusTarget({ lng: place.lng, lat: place.lat, zoom: zoomForPlaceType(place.placeType) });
       setPaletteOpen(false); // keep the list open so you can edit several in a row
     },
-    [places, tagFilters],
+    [places, tagFilters, personFilter],
   );
 
   // "Go to <place>" from the palette: geocode ANY place (even with nobody tagged,
@@ -259,35 +274,55 @@ export default function MapHome() {
     setFocusTarget({ lng: hit.lng, lat: hit.lat, zoom: zoomForPlaceType(hit.placeType), bbox: hit.bbox });
   }, []);
 
-  // Frame the map to all places carrying ANY of the given tags: fly to a single
-  // match, else fit a bbox around them. Also closes a detail panel whose place
-  // fell out of the filter so it doesn't hang open with no pin.
+  // Frame the map to a set of places: fly to a single match, else fit a bbox
+  // around them. Also closes a detail panel whose place fell out of the set so it
+  // doesn't hang open with no pin. Shared by the tag and person filters.
+  const frameMatching = useCallback((matching: MapPlace[]) => {
+    setSelectedId((cur) => (cur && !matching.some((p) => p.placeId === cur) ? null : cur));
+    if (matching.length === 0) return;
+    if (matching.length === 1) {
+      const p = matching[0];
+      setFocusTarget({ lng: p.lng, lat: p.lat, zoom: zoomForPlaceType(p.placeType) });
+      return;
+    }
+    let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+    for (const p of matching) {
+      if (p.lng < minLng) minLng = p.lng;
+      if (p.lng > maxLng) maxLng = p.lng;
+      if (p.lat < minLat) minLat = p.lat;
+      if (p.lat > maxLat) maxLat = p.lat;
+    }
+    setFocusTarget({
+      lng: (minLng + maxLng) / 2,
+      lat: (minLat + maxLat) / 2,
+      bbox: [minLng, minLat, maxLng, maxLat],
+    });
+  }, []);
+
   const fitToTags = useCallback(
     (tags: string[]) => {
       if (!tags.length) return;
-      const matching = places.filter((p) => p.tags.some((t) => tags.includes(t)));
-      setSelectedId((cur) => (cur && !matching.some((p) => p.placeId === cur) ? null : cur));
-      if (matching.length === 0) return;
-      if (matching.length === 1) {
-        const p = matching[0];
-        setFocusTarget({ lng: p.lng, lat: p.lat, zoom: zoomForPlaceType(p.placeType) });
-        return;
-      }
-      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-      for (const p of matching) {
-        if (p.lng < minLng) minLng = p.lng;
-        if (p.lng > maxLng) maxLng = p.lng;
-        if (p.lat < minLat) minLat = p.lat;
-        if (p.lat > maxLat) maxLat = p.lat;
-      }
-      setFocusTarget({
-        lng: (minLng + maxLng) / 2,
-        lat: (minLat + maxLat) / 2,
-        bbox: [minLng, minLat, maxLng, maxLat],
-      });
+      frameMatching(places.filter((p) => p.tags.some((t) => tags.includes(t))));
     },
-    [places],
+    [places, frameMatching],
   );
+
+  // Filter the map (+ browse drawer) to everywhere ONE person is tied to. Clears
+  // any tag filter (single dimension), opens the drawer scoped to their places,
+  // frames them, and closes the palette — picking a person is a complete action,
+  // like picking a place.
+  const handleFilterByPerson = useCallback(
+    (personId: string, name: string) => {
+      setTagFilters([]);
+      setPersonFilter({ id: personId, name });
+      setListOpen(true);
+      setPaletteOpen(false);
+      frameMatching(places.filter((p) => p.people.some((l) => l.personId === personId)));
+    },
+    [places, frameMatching],
+  );
+
+  const handleClearPerson = useCallback(() => setPersonFilter(null), []);
 
   // Toggle a tag in/out of the filter set. Stays in the palette (no close) so you
   // can pick several in a row; re-frames the map to the new union each time.
@@ -423,9 +458,21 @@ export default function MapHome() {
       {/* Active tag filters — under the view controls. 1–3 show as individual
           removable pills (the visual Owen likes); 4+ collapse to one count pill
           that opens the palette, so the left side never gets cluttered. */}
-      {tagFilters.length > 0 && (
+      {(personFilter || tagFilters.length > 0) && (
         <div className="absolute left-4 top-28 z-30 flex max-w-[12rem] flex-col items-start gap-1.5">
-          {tagFilters.length <= 3 ? (
+          {personFilter ? (
+            <span className="flex max-w-full items-center gap-1.5 rounded-lg bg-indigo-100/95 px-2.5 py-1.5 text-xs font-medium text-indigo-900 shadow-md backdrop-blur">
+              <User size={13} className="shrink-0" />
+              <span className="truncate">{personFilter.name}</span>
+              <button
+                onClick={handleClearPerson}
+                className="-mr-0.5 ml-0.5 shrink-0 rounded p-0.5 hover:bg-indigo-200"
+                aria-label={`Clear ${personFilter.name} filter`}
+              >
+                <X size={13} />
+              </button>
+            </span>
+          ) : tagFilters.length <= 3 ? (
             tagFilters.map((t) => (
               <span
                 key={t}
@@ -475,7 +522,7 @@ export default function MapHome() {
           result={result}
           onConfirmDelete={handleConfirmDelete}
           onCancelDelete={handleCancelDelete}
-          onDismiss={() => setResult(null)}
+          onDismiss={handleDismissResult}
         />
       </div>
 
@@ -512,6 +559,9 @@ export default function MapHome() {
         tagFilters={tagFilters}
         onToggleTag={handleToggleTag}
         onClearTags={handleClearTags}
+        personFilter={personFilter}
+        onFilterByPerson={handleFilterByPerson}
+        onClearPerson={handleClearPerson}
       />
     </main>
   );

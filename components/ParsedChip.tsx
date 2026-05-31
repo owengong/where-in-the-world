@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { RELATIONSHIP_LABEL, type CaptureResult, type PendingDelete } from '@/lib/types';
 
 type Props = {
@@ -16,12 +16,30 @@ const OP_TAG: Record<'add' | 'move', { label: string; cls: string }> = {
 };
 
 export default function ParsedChip({ result, onConfirmDelete, onCancelDelete, onDismiss }: Props) {
+  const [paused, setPaused] = useState(false);
+  const pendingCount = result?.pendingDeletes.length ?? 0;
+
+  // Auto-dismiss the "Read as" confirmation after a few seconds so it doesn't
+  // linger — but ONLY when there's nothing to confirm (pending deletes are
+  // confirm-gated and must wait for you). Pauses while you hover so you can read
+  // it; the ✕ still dismisses instantly. Keyed on `result`, so each new capture
+  // restarts the countdown. (onDismiss is a stable callback from MapHome.)
+  useEffect(() => {
+    if (!result || pendingCount > 0 || paused) return;
+    const id = setTimeout(onDismiss, 5000);
+    return () => clearTimeout(id);
+  }, [result, pendingCount, paused, onDismiss]);
+
   if (!result) return null;
   const { applied, pendingDeletes, issues, usedLLM } = result;
   const empty = applied.length === 0 && pendingDeletes.length === 0 && issues.length === 0;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white/95 p-3 text-sm shadow-lg backdrop-blur">
+    <div
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      className="rounded-xl border border-gray-200 bg-white/95 p-3 text-sm shadow-lg backdrop-blur"
+    >
       <div className="mb-1.5 flex items-center justify-between">
         <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Read as</span>
         <div className="flex items-center gap-2">

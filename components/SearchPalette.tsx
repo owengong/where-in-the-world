@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Check, Navigation, Search, Tag, X } from 'lucide-react';
+import { Check, Navigation, Search, Tag, User, X } from 'lucide-react';
 import ResultRow from './ResultRow';
 import { normalize, searchPlaces } from '@/lib/search';
 import type { MapPlace } from '@/lib/types';
@@ -20,18 +20,28 @@ type Props = {
   onToggleTag: (tag: string) => void;
   /** Drop all tag filters. */
   onClearTags: () => void;
+  /** The single person the map is currently filtered to (null = none). */
+  personFilter: { id: string; name: string } | null;
+  /** Filter the map (+ drawer) to everywhere this person lives/visited/wants to go. */
+  onFilterByPerson: (personId: string, name: string) => void;
+  /** Drop the person filter. */
+  onClearPerson: () => void;
 };
 
 const MAX_RESULTS = 50;
 const MAX_TAG_ROWS = 6; // matching-tag rows shown above results while typing
+const MAX_PERSON_ROWS = 6; // matching-person rows shown above results while typing
 const CHIP_CAP = 18; // unselected tag chips shown before collapsing to "+N more"
 
 type TagCount = { tag: string; count: number };
+type PersonHit = { id: string; name: string; placeCount: number };
 
-// A flat, keyboard-navigable model of everything in the list. Tag rows sit on
-// top (while typing), then place results, then the trailing "Go to" row.
+// A flat, keyboard-navigable model of everything in the list. Tag rows then
+// person rows sit on top (while typing), then place results, then the trailing
+// "Go to" row (rendered as a pinned footer, but still part of this list for nav).
 type Item =
   | { kind: 'tag'; tag: string; count: number }
+  | { kind: 'person'; id: string; name: string; placeCount: number }
   | { kind: 'place'; result: ReturnType<typeof searchPlaces>[number] }
   | { kind: 'goto' };
 
@@ -39,8 +49,9 @@ type Item =
  * Spotlight-style command palette (Cmd/Ctrl+K or "/"). Built on Radix Dialog
  * primitives directly so it can be top-aligned with a light overlay. Picking a
  * tracked place flies + opens PlaceDetail (onPick); tag rows/chips TOGGLE the
- * map's tag filter (union; onToggleTag) and keep the palette open so you can
- * pick several; the trailing "Go to …" row geocodes ANY place (onSearchMap).
+ * map's tag filter (union; onToggleTag) and keep the palette open; a person row
+ * filters the map + drawer to everywhere that person is tied to (onFilterByPerson,
+ * single-select); the trailing "Go to …" row geocodes ANY place (onSearchMap).
  */
 export default function SearchPalette({
   open,
@@ -51,6 +62,9 @@ export default function SearchPalette({
   tagFilters,
   onToggleTag,
   onClearTags,
+  personFilter,
+  onFilterByPerson,
+  onClearPerson,
 }: Props) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
@@ -72,6 +86,19 @@ export default function SearchPalette({
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
   }, [places]);
 
+  // Distinct people across every place, with how many DISTINCT places each is
+  // tied to (a friend in 3 cities = 3) — the count shown on a person row.
+  const allPeople = useMemo<PersonHit[]>(() => {
+    const m = new Map<string, { id: string; name: string; placeIds: Set<string> }>();
+    for (const p of places)
+      for (const link of p.people) {
+        const e = m.get(link.personId);
+        if (e) e.placeIds.add(p.placeId);
+        else m.set(link.personId, { id: link.personId, name: link.name, placeIds: new Set([p.placeId]) });
+      }
+    return [...m.values()].map((e) => ({ id: e.id, name: e.name, placeCount: e.placeIds.size }));
+  }, [places]);
+
   // Unselected tags are the "add" surface (the chip row); selected ones live in
   // the banner. Cap how many chips render so a big tag vocabulary can't flood it.
   const unselectedTags = useMemo(
@@ -81,22 +108,38 @@ export default function SearchPalette({
   const shownChips = unselectedTags.slice(0, CHIP_CAP);
   const hiddenChipCount = unselectedTags.length - shownChips.length;
 
-  // Tags whose name contains the query — these become nav rows while typing.
+  // Tags / people whose name contains the query — these become nav rows while typing.
   const matchingTags = useMemo<TagCount[]>(() => {
     if (!trimmed) return [];
     const nq = normalize(trimmed);
     return allTags.filter((t) => normalize(t.tag).includes(nq)).slice(0, MAX_TAG_ROWS);
   }, [allTags, trimmed]);
 
+  const matchingPeople = useMemo<PersonHit[]>(() => {
+    if (!trimmed) return [];
+    const nq = normalize(trimmed);
+    return allPeople
+      .filter((p) => normalize(p.name).includes(nq))
+      .sort((a, b) => b.placeCount - a.placeCount || a.name.localeCompare(b.name))
+      .slice(0, MAX_PERSON_ROWS);
+  }, [allPeople, trimmed]);
+
   const items = useMemo<Item[]>(() => {
     const tagItems: Item[] = matchingTags.map((t) => ({ kind: 'tag', tag: t.tag, count: t.count }));
+    const personItems: Item[] = matchingPeople.map((p) => ({
+      kind: 'person',
+      id: p.id,
+      name: p.name,
+      placeCount: p.placeCount,
+    }));
     const placeItems: Item[] = results.map((r) => ({ kind: 'place', result: r }));
     const gotoItems: Item[] = hasGoto ? [{ kind: 'goto' }] : [];
-    return [...tagItems, ...placeItems, ...gotoItems];
-  }, [matchingTags, results, hasGoto]);
+    return [...tagItems, ...personItems, ...placeItems, ...gotoItems];
+  }, [matchingTags, matchingPeople, results, hasGoto]);
 
   const count = items.length;
-  const firstPlaceIndex = matchingTags.length; // where place rows begin
+  const firstPlaceIndex = matchingTags.length + matchingPeople.length; // where place rows begin
+  const gotoIndex = hasGoto ? count - 1 : -1;
 
   // Clamp during render so the highlight never points past the list — avoids a
   // transient frame with no active option as results shrink, and keeps Enter
@@ -113,8 +156,9 @@ export default function SearchPalette({
   }, [open]);
 
   // Re-default the highlight to the first PLACE result on every query EDIT (keyed
-  // on the text, not the derived tag count) so "type → Enter" lands on the top
-  // match even after the user has arrowed around; tag rows above are one ArrowUp.
+  // on the text, not the derived tag/person count) so "type → Enter" lands on the
+  // top match even after the user has arrowed around; tag/person rows above are
+  // one or two ArrowUps.
   useEffect(() => {
     setActive(firstPlaceIndex);
   }, [trimmed, firstPlaceIndex]);
@@ -127,7 +171,10 @@ export default function SearchPalette({
     const item = items[index];
     if (!item) return;
     if (item.kind === 'tag') onToggleTag(item.tag); // toggle, palette stays open
-    else if (item.kind === 'place') onPick(item.result.place.placeId);
+    else if (item.kind === 'person') {
+      if (personFilter?.id === item.id) onClearPerson();
+      else onFilterByPerson(item.id, item.name);
+    } else if (item.kind === 'place') onPick(item.result.place.placeId);
     else onSearchMap(trimmed);
   };
 
@@ -149,6 +196,38 @@ export default function SearchPalette({
   // multi-word tags (a tag id with a space wouldn't resolve for screen readers).
   const rowId = (i: number) => `palette-row-${i}`;
   const activeId = items[activeIndex] ? rowId(activeIndex) : undefined;
+
+  // The trailing "Go to …" action, rendered as a pinned footer BELOW the scroll
+  // area (still inside role=listbox + part of `items` for keyboard nav). Pulling
+  // it out of the scroll container is what stops a result row from bleeding
+  // through under it.
+  const gotoFooter = () => {
+    const i = gotoIndex;
+    return (
+      <button
+        key="goto"
+        ref={i === activeIndex ? activeRef : undefined}
+        id={rowId(i)}
+        role="option"
+        aria-selected={i === activeIndex}
+        onClick={() => onSearchMap(trimmed)}
+        className={`flex w-full items-center gap-2.5 border-t border-gray-100 px-2.5 py-2.5 text-left transition-colors ${
+          i === activeIndex ? 'bg-gray-100' : 'bg-white hover:bg-gray-50'
+        }`}
+      >
+        <Navigation size={16} className="shrink-0 text-gray-400" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm text-gray-900">Go to “{trimmed}” on the map</span>
+          <span className="block truncate text-xs text-gray-500">
+            Jump anywhere — even with no one tagged
+          </span>
+        </span>
+        <kbd className="hidden shrink-0 rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-500 sm:block">
+          ⌘↵
+        </kbd>
+      </button>
+    );
+  };
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -190,6 +269,22 @@ export default function SearchPalette({
               esc
             </kbd>
           </div>
+
+          {/* Active person filter — single-select; the banner clears it. */}
+          {personFilter && (
+            <div className="flex items-center justify-between border-b border-gray-100 bg-indigo-50/60 px-3 py-2">
+              <p className="flex min-w-0 items-center gap-1.5 px-1 text-[11px] font-medium uppercase tracking-wide text-indigo-700">
+                <User size={12} className="shrink-0" />
+                <span className="truncate">Showing {personFilter.name}’s places</span>
+              </p>
+              <button
+                onClick={onClearPerson}
+                className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-indigo-800 hover:bg-indigo-100"
+              >
+                Clear
+              </button>
+            </div>
+          )}
 
           {/* Selected tags — the active filter set (union). Each chip removes
               itself; "Clear all" drops them. Shown in any state so you can manage
@@ -258,85 +353,91 @@ export default function SearchPalette({
             id="palette-listbox"
             role="listbox"
             aria-label="Search results"
-            className="max-h-[60vh] overflow-auto p-1.5"
+            className="flex max-h-[60vh] flex-col"
           >
-            {!trimmed && results.length > 0 && (
-              <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">
-                Most connected
-              </p>
-            )}
+            <div className="min-h-0 flex-1 overflow-auto p-1.5">
+              {!trimmed && results.length > 0 && (
+                <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wide text-gray-400">
+                  Most connected
+                </p>
+              )}
 
-            {items.map((item, i) => {
-              if (item.kind === 'tag') {
-                const on = selectedSet.has(item.tag);
-                return (
-                  <button
-                    key={`tag-${item.tag}`}
-                    ref={i === activeIndex ? activeRef : undefined}
-                    id={rowId(i)}
-                    role="option"
-                    aria-selected={i === activeIndex}
-                    onClick={() => onToggleTag(item.tag)}
-                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
-                      i === activeIndex ? 'bg-amber-50' : on ? 'bg-amber-50/40' : 'hover:bg-gray-50'
-                    }`}
-                  >
-                    <Tag size={16} className="shrink-0 text-amber-500" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-gray-900">
-                        {on ? 'Remove' : 'Filter map by'} <span className="font-medium">{item.tag}</span>
+              {items.map((item, i) => {
+                if (item.kind === 'tag') {
+                  const on = selectedSet.has(item.tag);
+                  return (
+                    <button
+                      key={`tag-${item.tag}`}
+                      ref={i === activeIndex ? activeRef : undefined}
+                      id={rowId(i)}
+                      role="option"
+                      aria-selected={i === activeIndex}
+                      onClick={() => onToggleTag(item.tag)}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                        i === activeIndex ? 'bg-amber-50' : on ? 'bg-amber-50/40' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <Tag size={16} className="shrink-0 text-amber-500" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-gray-900">
+                          {on ? 'Remove' : 'Filter map by'} <span className="font-medium">{item.tag}</span>
+                        </span>
+                        <span className="block truncate text-xs text-gray-500">
+                          {item.count} {item.count === 1 ? 'place' : 'places'}
+                          {on ? ' · selected' : ''}
+                        </span>
                       </span>
-                      <span className="block truncate text-xs text-gray-500">
-                        {item.count} {item.count === 1 ? 'place' : 'places'}
-                        {on ? ' · selected' : ''}
+                      {on && <Check size={16} className="shrink-0 text-amber-600" />}
+                    </button>
+                  );
+                }
+                if (item.kind === 'person') {
+                  const on = personFilter?.id === item.id;
+                  return (
+                    <button
+                      key={`person-${item.id}`}
+                      ref={i === activeIndex ? activeRef : undefined}
+                      id={rowId(i)}
+                      role="option"
+                      aria-selected={i === activeIndex}
+                      onClick={() => (on ? onClearPerson() : onFilterByPerson(item.id, item.name))}
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
+                        i === activeIndex ? 'bg-indigo-50' : on ? 'bg-indigo-50/40' : 'hover:bg-gray-50'
+                      }`}
+                    >
+                      <User size={16} className="shrink-0 text-indigo-500" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-gray-900">
+                          {on ? 'Showing' : 'Show'} <span className="font-medium">{item.name}</span>’s places
+                        </span>
+                        <span className="block truncate text-xs text-gray-500">
+                          {item.placeCount} {item.placeCount === 1 ? 'place' : 'places'} on the map
+                          {on ? ' · showing' : ''}
+                        </span>
                       </span>
-                    </span>
-                    {on && <Check size={16} className="shrink-0 text-amber-600" />}
-                  </button>
-                );
-              }
-              if (item.kind === 'place') {
-                return (
-                  <ResultRow
-                    key={item.result.place.placeId}
-                    ref={i === activeIndex ? activeRef : undefined}
-                    id={rowId(i)}
-                    role="option"
-                    place={item.result.place}
-                    matchedPersonNames={item.result.matchedPersonNames}
-                    active={i === activeIndex}
-                    onClick={() => onPick(item.result.place.placeId)}
-                  />
-                );
-              }
-              // goto
-              return (
-                <button
-                  key="goto"
-                  ref={i === activeIndex ? activeRef : undefined}
-                  id={rowId(i)}
-                  role="option"
-                  aria-selected={i === activeIndex}
-                  onClick={() => onSearchMap(trimmed)}
-                  className={`sticky bottom-0 flex w-full items-center gap-2.5 border-t border-gray-100 px-2.5 py-2.5 text-left transition-colors ${
-                    i === activeIndex ? 'bg-gray-100' : 'bg-white hover:bg-gray-50'
-                  }`}
-                >
-                  <Navigation size={16} className="shrink-0 text-gray-400" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-gray-900">
-                      Go to “{trimmed}” on the map
-                    </span>
-                    <span className="block truncate text-xs text-gray-500">
-                      Jump anywhere — even with no one tagged
-                    </span>
-                  </span>
-                  <kbd className="hidden shrink-0 rounded-md border border-gray-300 bg-gray-50 px-2 py-1 text-xs font-semibold text-gray-500 sm:block">
-                    ⌘↵
-                  </kbd>
-                </button>
-              );
-            })}
+                      {on && <Check size={16} className="shrink-0 text-indigo-600" />}
+                    </button>
+                  );
+                }
+                if (item.kind === 'place') {
+                  return (
+                    <ResultRow
+                      key={item.result.place.placeId}
+                      ref={i === activeIndex ? activeRef : undefined}
+                      id={rowId(i)}
+                      role="option"
+                      place={item.result.place}
+                      matchedPersonNames={item.result.matchedPersonNames}
+                      active={i === activeIndex}
+                      onClick={() => onPick(item.result.place.placeId)}
+                    />
+                  );
+                }
+                return null; // goto is rendered as the pinned footer below
+              })}
+            </div>
+
+            {hasGoto && gotoFooter()}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

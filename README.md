@@ -11,6 +11,18 @@ Pins are colored by relationship: 🟢 **lives · from · family** · 🔵 **vis
 🟡 **wishlist**. Places can also carry free-form **tags** (`ski resort`,
 `holy site`, `money capital`, …).
 
+## Finding people & places
+
+- **⌘K command palette** — search across place names, countries, tags, and
+  people (diacritic-folded). Pick a place to fly there; **filter the map to one
+  person** (everywhere they live / visited / want to go); filter to one or more
+  **tags** (union); or **"Go to *anywhere*"** to geocode and jump to any place,
+  even one with nobody tagged.
+- **⌘B browse drawer** — every place grouped by country (or A–Z), with a live
+  filter and ↑/↓ keyboard navigation; click a row to open it for editing.
+- **⌘I** toggles the detail card for the last-opened place. The map renders as a
+  **globe or a flat map** (toggle, top-left).
+
 ## Tech stack
 
 - **Next.js 14** (App Router) · React · TypeScript · Tailwind
@@ -72,6 +84,6 @@ Architecture is **API-first** — all logic lives in `/app/api` route handlers a
 ## Roadmap
 
 - Disambiguation queue (catch low-confidence/ambiguous geocodes → "did you mean X or Y?")
-- Tag-based map filtering
+- Multi-person filtering (today it's one person at a time) + combining person × tag filters
 - Bulk-paste import UI (currently a one-off script)
 - iOS via Expo (native share-sheet capture + on-device dictation) against this same API

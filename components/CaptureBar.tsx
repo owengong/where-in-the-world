@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
+import { Loader2, Mic, Plus } from 'lucide-react';
 
 type Props = {
   onSubmit: (text: string) => void | Promise<void>;
@@ -69,20 +70,25 @@ export default function CaptureBar({ onSubmit, busy }: Props) {
         <button
           type="button"
           onClick={toggleVoice}
-          title="Dictate"
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-lg transition-colors ${
-            listening ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          title={listening ? 'Stop dictation' : 'Dictate'}
+          aria-label={listening ? 'Stop dictation' : 'Dictate'}
+          aria-pressed={listening}
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-colors ${
+            listening
+              ? 'bg-red-500 text-white shadow-sm'
+              : 'bg-gray-100 text-gray-500 hover:bg-gray-200 hover:text-gray-700'
           }`}
         >
-          🎤
+          <Mic size={18} className={listening ? 'animate-pulse' : ''} />
         </button>
       )}
       <button
         type="button"
         onClick={submit}
         disabled={busy || !text.trim()}
-        className="h-10 shrink-0 rounded-xl bg-gray-900 px-4 text-sm font-medium text-white transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex h-10 shrink-0 items-center gap-1.5 rounded-xl bg-gray-900 px-3.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-gray-700 disabled:cursor-not-allowed disabled:opacity-40 disabled:shadow-none"
       >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
         {busy ? 'Reading…' : 'Add'}
       </button>
     </div>
