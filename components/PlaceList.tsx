@@ -26,6 +26,7 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
   const [sort, setSort] = useState<'people' | 'az'>('people');
   const selectedRef = useRef<HTMLButtonElement | null>(null);
   const drawerRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const q = filter.trim();
   const flat = useMemo(() => (q ? search(q) : null), [q, search]);
@@ -35,8 +36,18 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
   );
 
   // Scroll the open place into view whenever selection changes (pin OR list).
+  // Scroll the LIST CONTAINER directly (not scrollIntoView, which bubbles to the
+  // window): mid-slide-in the row is off-screen-right, and scrollIntoView would
+  // scroll the whole layout to chase it — spamming ⌘B made the map "bounce".
   useEffect(() => {
-    if (open && selectedPlaceId) selectedRef.current?.scrollIntoView({ block: 'nearest' });
+    const item = selectedRef.current;
+    const container = listRef.current;
+    if (!open || !selectedPlaceId || !item || !container) return;
+    const ir = item.getBoundingClientRect();
+    const cr = container.getBoundingClientRect();
+    if (ir.top < cr.top || ir.bottom > cr.bottom) {
+      container.scrollTop += ir.top - cr.top - (cr.height - ir.height) / 2;
+    }
   }, [selectedPlaceId, open]);
 
   // When closed, take the off-screen drawer out of the tab order + a11y tree
@@ -69,9 +80,17 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
         <h2 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
           <List size={16} /> Places <span className="font-normal text-gray-400">{places.length}</span>
         </h2>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-700" aria-label="Close list">
-          <X size={18} />
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <kbd
+            title="Toggle this list with ⌘B"
+            className="hidden items-center rounded-md border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] font-medium text-gray-400 sm:inline-flex"
+          >
+            ⌘B
+          </kbd>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700" aria-label="Close list">
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
       <div className="px-3 pb-2 pt-2">
@@ -99,7 +118,7 @@ export default function PlaceList({ open, onClose, places, selectedPlaceId, onPi
         )}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-3">
+      <div ref={listRef} className="min-h-0 flex-1 overflow-auto px-1.5 pb-3">
         {flat ? (
           flat.length === 0 ? (
             <p className="px-3 py-6 text-center text-sm text-gray-400">No matches</p>

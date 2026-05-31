@@ -15,17 +15,20 @@ type Props = {
   onSelectPlace: (place: MapPlace) => void;
   /** When set (a fresh object per request), move the map here — fit the bbox if given, else fly to the point. */
   focus?: { lng: number; lat: number; zoom?: number; bbox?: [number, number, number, number] | null } | null;
+  /** A USER pan/zoom finished (not a programmatic fly). `zoomedOut` = zoom dropped meaningfully. */
+  onUserMove?: (zoomedOut: boolean) => void;
 };
 
 function bubbleSize(count: number): number {
   return Math.min(56, 30 + count * 3);
 }
 
-export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, focus }: Props) {
+export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, focus, onUserMove }: Props) {
   const mapRef = useRef<MapRef | null>(null);
   const [isGlobe, setIsGlobe] = useState(false);
   const [bounds, setBounds] = useState<[number, number, number, number] | null>(null);
   const [zoom, setZoom] = useState(1.6);
+  const prevZoomRef = useRef(1.6); // last settled zoom, to tell zoom-out from zoom-in
 
   const placeById = useMemo(() => {
     const m = new Map<string, MapPlace>();
@@ -73,9 +76,23 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, foc
     setZoom(map.getZoom());
   }, []);
 
+  // Tell a USER pan/zoom (has originalEvent) from a programmatic fly, and whether
+  // it zoomed out, so the parent can forget/dismiss the open card on navigation.
+  const handleMoveEnd = useCallback(
+    (e: any) => {
+      syncViewport();
+      const z = e?.viewState?.zoom ?? mapRef.current?.getZoom() ?? prevZoomRef.current;
+      const zoomedOut = z < prevZoomRef.current - 0.3;
+      prevZoomRef.current = z;
+      if (e?.originalEvent) onUserMove?.(zoomedOut);
+    },
+    [syncViewport, onUserMove],
+  );
+
   const resetView = useCallback(() => {
     mapRef.current?.flyTo({ center: [0, 20], zoom: 1.6, duration: 800 });
-  }, []);
+    onUserMove?.(true); // explicit "zoom out to the whole map" — treat as navigating away
+  }, [onUserMove]);
 
   // Move to a place picked from the palette/list, or a geocoded "go to" search:
   // fit its bounding box when we have one (frames a whole country), else fly.
@@ -119,7 +136,7 @@ export default function ClusterMap({ places, selectedPlaceId, onSelectPlace, foc
         mapStyle="mapbox://styles/mapbox/light-v11"
         projection={{ name: isGlobe ? 'globe' : 'mercator' }}
         onLoad={syncViewport}
-        onMoveEnd={syncViewport}
+        onMoveEnd={handleMoveEnd}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 

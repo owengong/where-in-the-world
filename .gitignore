@@ -40,5 +40,6 @@ next-env.d.ts
 
 # personal data (parsed Apple Notes — names/locations, not for the repo)
 /scripts/import-data.json
-# dedupe reversibility snapshots (real DB rows — keep local only)
+# dedupe / cleanup reversibility snapshots (real DB rows — keep local only)
 /scripts/dedupe-backup-*.json
+/scripts/cleanup-orphans-backup-*.json

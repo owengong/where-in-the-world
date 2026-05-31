@@ -73,6 +73,22 @@ export async function renamePerson(personId: string, name: string, baseUrl = '')
   }
 }
 
+export async function changeLinkRelationship(
+  linkId: string,
+  relationship: Relationship,
+  baseUrl = '',
+): Promise<void> {
+  const res = await fetch(`${baseUrl}/api/link`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ linkId, relationship }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`PATCH /api/link failed: ${res.status} ${detail}`);
+  }
+}
+
 export async function setPlaceTag(
   placeId: string,
   tag: string,

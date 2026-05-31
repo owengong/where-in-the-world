@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
-import { List, Search } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { List, Search, Tag, X } from 'lucide-react';
 import ClusterMap from './ClusterMap';
 import CaptureBar from './CaptureBar';
 import ParsedChip from './ParsedChip';
@@ -11,6 +11,7 @@ import SearchPalette from './SearchPalette';
 import {
   addPersonToPlace,
   applyDeletes,
+  changeLinkRelationship,
   fetchMapPlaces,
   geocodeQuery,
   postCapture,
@@ -49,12 +50,40 @@ function zoomForPlaceType(t: string | null): number {
 export default function MapHome() {
   const [places, setPlaces] = useState<MapPlace[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // The last place that was open — lets ⌘I reopen it, until you navigate away.
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CaptureResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [focusTarget, setFocusTarget] = useState<FocusTarget>(null);
+  const [tagFilters, setTagFilters] = useState<string[]>([]);
+
+  // The map + browse list show places carrying ANY selected tag (union); the
+  // palette keeps searching the full set (it's where you pick/clear tags).
+  const visiblePlaces = useMemo(
+    () =>
+      tagFilters.length
+        ? places.filter((p) => p.tags.some((t) => tagFilters.includes(t)))
+        : places,
+    [places, tagFilters],
+  );
+
+  // Latest values for the global key handler to read WITHOUT re-subscribing the
+  // window listener every render (visiblePlaces is a fresh array each time).
+  const lastSelectedIdRef = useRef(lastSelectedId);
+  lastSelectedIdRef.current = lastSelectedId;
+  const visiblePlacesRef = useRef(visiblePlaces);
+  visiblePlacesRef.current = visiblePlaces;
+
+  // Whole tag vocabulary, ranked by how many places carry each — feeds the
+  // place panel's add-tag autocomplete so you reuse existing tags, not retype.
+  const allTags = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const p of places) for (const t of p.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([t]) => t);
+  }, [places]);
 
   const load = useCallback(async () => {
     try {
@@ -68,6 +97,22 @@ export default function MapHome() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Remember the most recently opened place so ⌘I can reopen it. Navigating away
+  // (a map pan/zoom, below) clears it so the toggle never resurrects a stale card.
+  useEffect(() => {
+    if (selectedId) setLastSelectedId(selectedId);
+  }, [selectedId]);
+
+  // Drop any selected tag that no longer exists on any place (its last tag was
+  // removed, or a place dropped out after its last person was removed) so the
+  // map can't be stranded empty. Mirrors how `selected` is re-derived below.
+  useEffect(() => {
+    setTagFilters((cur) => {
+      const live = cur.filter((t) => places.some((p) => p.tags.includes(t)));
+      return live.length === cur.length ? cur : live;
+    });
+  }, [places]);
 
   const handleCapture = useCallback(
     async (text: string) => {
@@ -142,6 +187,19 @@ export default function MapHome() {
     [load],
   );
 
+  const handleChangeRelationship = useCallback(
+    async (linkId: string, relationship: Relationship) => {
+      try {
+        await changeLinkRelationship(linkId, relationship);
+        await load();
+      } catch (e: any) {
+        console.error(e);
+        setError(e?.message ?? 'Move failed');
+      }
+    },
+    [load],
+  );
+
   const handleRenamePerson = useCallback(
     async (personId: string, name: string) => {
       setError(null);
@@ -175,11 +233,14 @@ export default function MapHome() {
     (placeId: string) => {
       const place = places.find((p) => p.placeId === placeId);
       if (!place) return;
+      // If a tag filter is active and the picked place isn't in it, clear the
+      // filter — otherwise the card would open over an empty map with no pin.
+      if (tagFilters.length && !place.tags.some((t) => tagFilters.includes(t))) setTagFilters([]);
       setSelectedId(placeId);
       setFocusTarget({ lng: place.lng, lat: place.lat, zoom: zoomForPlaceType(place.placeType) });
       setPaletteOpen(false); // keep the list open so you can edit several in a row
     },
-    [places],
+    [places, tagFilters],
   );
 
   // "Go to <place>" from the palette: geocode ANY place (even with nobody tagged,
@@ -192,8 +253,84 @@ export default function MapHome() {
       return;
     }
     setError(null);
+    // Navigated to a new location — don't strand an open card (or let ⌘I revive it).
+    setSelectedId(null);
+    setLastSelectedId(null);
     setFocusTarget({ lng: hit.lng, lat: hit.lat, zoom: zoomForPlaceType(hit.placeType), bbox: hit.bbox });
   }, []);
+
+  // Frame the map to all places carrying ANY of the given tags: fly to a single
+  // match, else fit a bbox around them. Also closes a detail panel whose place
+  // fell out of the filter so it doesn't hang open with no pin.
+  const fitToTags = useCallback(
+    (tags: string[]) => {
+      if (!tags.length) return;
+      const matching = places.filter((p) => p.tags.some((t) => tags.includes(t)));
+      setSelectedId((cur) => (cur && !matching.some((p) => p.placeId === cur) ? null : cur));
+      if (matching.length === 0) return;
+      if (matching.length === 1) {
+        const p = matching[0];
+        setFocusTarget({ lng: p.lng, lat: p.lat, zoom: zoomForPlaceType(p.placeType) });
+        return;
+      }
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      for (const p of matching) {
+        if (p.lng < minLng) minLng = p.lng;
+        if (p.lng > maxLng) maxLng = p.lng;
+        if (p.lat < minLat) minLat = p.lat;
+        if (p.lat > maxLat) maxLat = p.lat;
+      }
+      setFocusTarget({
+        lng: (minLng + maxLng) / 2,
+        lat: (minLat + maxLat) / 2,
+        bbox: [minLng, minLat, maxLng, maxLat],
+      });
+    },
+    [places],
+  );
+
+  // Toggle a tag in/out of the filter set. Stays in the palette (no close) so you
+  // can pick several in a row; re-frames the map to the new union each time.
+  const handleToggleTag = useCallback(
+    (tag: string) => {
+      const adding = !tagFilters.includes(tag);
+      const next = adding ? [...tagFilters, tag] : tagFilters.filter((t) => t !== tag);
+      setTagFilters(next);
+      if (adding) setListOpen(true); // surface the filtered list beside the map
+      fitToTags(next);
+    },
+    [tagFilters, fitToTags],
+  );
+
+  const handleClearTags = useCallback(() => setTagFilters([]), []);
+
+  // The user panned/zoomed the map themselves (not a programmatic fly). A zoom-OUT
+  // means "navigated away": dismiss the open card and forget the reopen target. A
+  // plain pan / zoom-in keeps an OPEN card (so ⌘I still toggles it); only when
+  // nothing is open does a pan forget a stale reopen target.
+  const handleUserMove = useCallback(
+    (zoomedOut: boolean) => {
+      if (zoomedOut) {
+        setSelectedId(null);
+        setLastSelectedId(null);
+      } else if (!selectedId) {
+        setLastSelectedId(null);
+      }
+    },
+    [selectedId],
+  );
+
+  // "Drill into" a tag from a place card: ensure it's in the filter set (never
+  // toggles off, so the click always lands you in that tag's view) and frame it.
+  const handleFilterByTag = useCallback(
+    (tag: string) => {
+      const next = tagFilters.includes(tag) ? tagFilters : [...tagFilters, tag];
+      setTagFilters(next);
+      setListOpen(true); // surface the filtered list beside the map
+      fitToTags(next);
+    },
+    [tagFilters, fitToTags],
+  );
 
   // One global hotkey listener: Cmd/Ctrl+K or "/" => search, Cmd/Ctrl+L => list,
   // Esc closes the next surface down. "/" and Esc never fire while typing.
@@ -205,6 +342,10 @@ export default function MapHome() {
       return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || node.isContentEditable;
     };
     const onKey = (e: KeyboardEvent) => {
+      // An open Radix popover (e.g. the relationship menu) owns ALL keys while
+      // open — don't let this capture-phase listener hijack Escape/⌘K/⌘B/⌘I and
+      // act on the panel/drawer underneath it.
+      if (document.querySelector('[data-radix-popper-content-wrapper]')) return;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
@@ -212,6 +353,15 @@ export default function MapHome() {
       } else if (mod && e.key.toLowerCase() === 'b' && !paletteOpen) {
         e.preventDefault();
         setListOpen((o) => !o); // toggle the Places sidebar (⌘B doesn't clobber Chrome/Mac)
+      } else if (mod && e.key.toLowerCase() === 'i') {
+        // Toggle the place detail card. Reopen only if the last place is still
+        // valid (exists + not filtered out); navigating away clears that target.
+        e.preventDefault();
+        if (selectedId) setSelectedId(null);
+        else {
+          const last = lastSelectedIdRef.current;
+          if (last && visiblePlacesRef.current.some((p) => p.placeId === last)) setSelectedId(last);
+        }
       } else if (e.key === '/' && !mod && !isEditable(e.target)) {
         e.preventDefault();
         setPaletteOpen(true);
@@ -235,10 +385,11 @@ export default function MapHome() {
   return (
     <main className="relative h-screen w-screen overflow-hidden">
       <ClusterMap
-        places={places}
+        places={visiblePlaces}
         selectedPlaceId={selectedId}
         onSelectPlace={(p) => setSelectedId(p.placeId)}
         focus={focusTarget}
+        onUserMove={handleUserMove}
       />
 
       {/* Search — top-left, the primary action. */}
@@ -269,6 +420,50 @@ export default function MapHome() {
         </button>
       )}
 
+      {/* Active tag filters — under the view controls. 1–3 show as individual
+          removable pills (the visual Owen likes); 4+ collapse to one count pill
+          that opens the palette, so the left side never gets cluttered. */}
+      {tagFilters.length > 0 && (
+        <div className="absolute left-4 top-28 z-30 flex max-w-[12rem] flex-col items-start gap-1.5">
+          {tagFilters.length <= 3 ? (
+            tagFilters.map((t) => (
+              <span
+                key={t}
+                className="flex max-w-full items-center gap-1.5 rounded-lg bg-amber-100/95 px-2.5 py-1.5 text-xs font-medium text-amber-900 shadow-md backdrop-blur"
+              >
+                <Tag size={13} className="shrink-0" />
+                <span className="truncate">{t}</span>
+                <button
+                  onClick={() => handleToggleTag(t)}
+                  className="-mr-0.5 ml-0.5 shrink-0 rounded p-0.5 hover:bg-amber-200"
+                  aria-label={`Remove ${t} filter`}
+                >
+                  <X size={13} />
+                </button>
+              </span>
+            ))
+          ) : (
+            <button
+              onClick={() => setPaletteOpen(true)}
+              title="Manage tag filters"
+              className="flex items-center gap-1.5 rounded-lg bg-amber-100/95 px-2.5 py-1.5 text-xs font-medium text-amber-900 shadow-md backdrop-blur hover:bg-amber-200"
+            >
+              <Tag size={13} className="shrink-0" />
+              <span>{tagFilters.length} tags</span>
+              <span className="text-amber-600">{visiblePlaces.length}</span>
+            </button>
+          )}
+          {tagFilters.length >= 2 && (
+            <button
+              onClick={handleClearTags}
+              className="rounded-lg bg-white/90 px-2 py-1 text-[11px] font-medium text-gray-600 shadow-md backdrop-blur hover:bg-white"
+            >
+              Clear all · {visiblePlaces.length} shown
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="absolute left-1/2 top-4 z-20 w-[min(740px,92vw)] -translate-x-1/2 space-y-2">
         <CaptureBar onSubmit={handleCapture} busy={busy} />
         {error && (
@@ -291,8 +486,11 @@ export default function MapHome() {
           onClose={() => setSelectedId(null)}
           onAddPerson={handleAddPerson}
           onRemoveLink={handleRemoveLink}
+          onChangeRelationship={handleChangeRelationship}
           onRenamePerson={handleRenamePerson}
           onSetTag={handleSetTag}
+          onFilterByTag={handleFilterByTag}
+          allTags={allTags}
           listOpen={listOpen}
         />
       )}
@@ -300,7 +498,7 @@ export default function MapHome() {
       <PlaceList
         open={listOpen}
         onClose={() => setListOpen(false)}
-        places={places}
+        places={visiblePlaces}
         selectedPlaceId={selectedId}
         onPick={handlePick}
       />
@@ -311,6 +509,9 @@ export default function MapHome() {
         places={places}
         onPick={handlePick}
         onSearchMap={handleSearchMap}
+        tagFilters={tagFilters}
+        onToggleTag={handleToggleTag}
+        onClearTags={handleClearTags}
       />
     </main>
   );

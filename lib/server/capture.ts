@@ -272,6 +272,55 @@ export async function addLink(
 }
 
 /**
+ * Move one person↔place link to a different relationship (e.g. visited → lives).
+ * If the person ALREADY has the target relationship at this place, the unique
+ * (person, place, relationship) index would block an update — so we drop this
+ * link instead, collapsing the two into the one that already existed.
+ */
+export async function changeLinkRelationship(
+  linkId: string,
+  relationship: string,
+): Promise<{ ok: boolean }> {
+  const [link] = await db
+    .select({ id: personPlace.id, personId: personPlace.personId, placeId: personPlace.placeId, relationship: personPlace.relationship })
+    .from(personPlace)
+    .where(eq(personPlace.id, linkId))
+    .limit(1);
+  if (!link) return { ok: false };
+  if (link.relationship === relationship) return { ok: true };
+
+  const [dup] = await db
+    .select({ id: personPlace.id })
+    .from(personPlace)
+    .where(
+      and(
+        eq(personPlace.personId, link.personId),
+        eq(personPlace.placeId, link.placeId),
+        eq(personPlace.relationship, relationship),
+      ),
+    )
+    .limit(1);
+
+  if (dup) {
+    await db.delete(personPlace).where(eq(personPlace.id, linkId));
+  } else {
+    try {
+      await db.update(personPlace).set({ relationship }).where(eq(personPlace.id, linkId));
+    } catch (e: any) {
+      // A concurrent move could have created the target (person, place,
+      // relationship) row between the dup check and this update — collapse into
+      // it rather than failing on the unique index (Postgres unique_violation).
+      if (e?.code === '23505') {
+        await db.delete(personPlace).where(eq(personPlace.id, linkId));
+      } else {
+        throw e;
+      }
+    }
+  }
+  return { ok: true };
+}
+
+/**
  * Rename a person IN PLACE (by id) — updates the single people row, so the new
  * name shows everywhere that person is linked. Never creates a new row. If the
  * new name already belongs to a DIFFERENT person, we refuse rather than silently

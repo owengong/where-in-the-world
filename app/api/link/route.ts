@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { addLink } from '@/lib/server/capture';
+import { addLink, changeLinkRelationship } from '@/lib/server/capture';
 import { RELATIONSHIPS } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -9,6 +9,11 @@ export const dynamic = 'force-dynamic';
 const Body = z.object({
   placeId: z.string().uuid(),
   name: z.string().min(1).max(200),
+  relationship: z.enum(RELATIONSHIPS),
+});
+
+const PatchBody = z.object({
+  linkId: z.string().uuid(),
   relationship: z.enum(RELATIONSHIPS),
 });
 
@@ -31,5 +36,29 @@ export async function POST(req: Request) {
   } catch (e) {
     console.error('[api/link] failed:', e);
     return NextResponse.json({ error: 'Add failed' }, { status: 500 });
+  }
+}
+
+// Move an existing link to a different relationship (lives → visited, etc.).
+export async function PATCH(req: Request) {
+  let json: unknown;
+  try {
+    json = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+
+  const parsed = PatchBody.safeParse(json);
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Expected { linkId, relationship }' }, { status: 400 });
+  }
+
+  try {
+    const result = await changeLinkRelationship(parsed.data.linkId, parsed.data.relationship);
+    if (!result.ok) return NextResponse.json({ error: 'Link not found' }, { status: 404 });
+    return NextResponse.json(result);
+  } catch (e) {
+    console.error('[api/link PATCH] failed:', e);
+    return NextResponse.json({ error: 'Move failed' }, { status: 500 });
   }
 }
